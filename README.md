@@ -1,30 +1,72 @@
 # AI Client Enquiry Assistant
 
-AI-powered staff-assist dashboard for Strata Management Consultants.  
-It classifies client enquiries, scores confidence, sets urgency, recommends next action, and drafts a suggested staff response using OpenRouter models.
+AI-powered staff-assist dashboard for Strata Management Consultants.
 
-## Features
+This tool accepts client enquiries, retrieves relevant knowledge base context using RAG, classifies the enquiry, assigns urgency, computes a cosine-distance-based confidence score, recommends a staff action, and drafts a client-ready suggested response.
 
-- Supabase Auth (email/password) for staff-only access
-- Main landing page for enquiry input and AI analysis
-- Separate enquiry history dashboard with classification color tags
-- Clicking a history card opens the landing page with the saved result (`/?enquiryId=...`)
-- OpenRouter model customization:
-  - user default model in Settings
-  - per-enquiry model override in the form
-- Confidence-based manual-review flag
-- Structured prompt + strict JSON parsing + fallback handling for invalid AI output
+It is designed as a practical prototype for helping staff process repetitive enquiry workflows faster while keeping humans in control of final communication.
+
+---
+
+## Assessment Requirements Covered
+
+This project satisfies the required assessment features:
+
+- Accepts a client enquiry through a text input form
+- Uses an AI model/API through OpenRouter to analyse the enquiry
+- Classifies the enquiry type
+- Generates a recommended staff action
+- Generates a suggested client-ready response
+- Presents the results in a usable staff dashboard
+- Includes RAG-based knowledge retrieval
+- Includes confidence scoring
+- Includes prompt engineering and strict JSON output
+- Includes error handling and fallback behavior
+- Includes automation-ready API endpoints
+- Includes setup, run instructions, and design decisions
+
+---
+
+## Core Features
+
+- Staff-only dashboard with Supabase Auth
+- Client enquiry input form
+- RAG-enabled knowledge base retrieval
+- OpenRouter-powered AI analysis
+- Classification and urgency detection
+- Cosine-distance-based confidence scoring
+- Manual-review flag for low-confidence enquiries
+- Suggested staff action
+- Client-ready suggested response
+- Enquiry history dashboard
+- Saved result reopening using `/?enquiryId=...`
+- User-level model settings
+- Per-enquiry model override
+- Public API endpoint for external workflow integrations
+- Strict JSON parsing with Zod validation
+- Safe fallback handling for vague, nonsensical, or invalid AI output
+
+---
 
 ## Tech Stack
 
-- Next.js 16 (App Router, TypeScript)
+- Next.js 16 App Router
+- TypeScript
 - Tailwind CSS
-- Supabase (Auth + Postgres + RLS)
+- Supabase Auth
+- Supabase Postgres
+- Supabase pgvector
 - OpenRouter API
+- OpenAI `text-embedding-3-small` through OpenRouter
+- Zod validation
 - Vitest + Testing Library
 - Vercel deployment target
 
+---
+
 ## Classification Categories
+
+The AI classifies enquiries into exactly one of these categories:
 
 - New Client
 - Support Request
@@ -35,48 +77,316 @@ It classifies client enquiries, scores confidence, sets urgency, recommends next
 - Urgent / Emergency
 - Other
 
-## API Surface
+---
 
-- `POST /api/enquiries/analyze`
-  - Request: `{ clientName?, clientEmail?, enquiryText, modelOverride? }`
-  - Response: saved enquiry analysis object
-- `GET /api/enquiries`
-  - Returns authenticated user enquiry cards (newest first)
-- `GET /api/enquiries/:id`
-  - Returns one enquiry detail for preloading landing page
-- `GET /api/settings/model`
-  - Returns user model defaults
-- `PATCH /api/settings/model`
-  - Updates `{ defaultModel, temperature, maxTokens }`
-- `POST /api/public/analyze`
-  - Public API key-protected analysis endpoint for external systems
-  - Full docs: [`PUBLIC_API.md`](./PUBLIC_API.md)
+## Urgency Levels
 
-## Public API Documentation
+The AI assigns one of these urgency levels:
 
-- Markdown link: [`PUBLIC_API.md`](./PUBLIC_API.md)
-- Repository path: `PUBLIC_API.md`
-- API key location in app: `Settings` → `Developer Settings` → `Create Key`
-- Supports multiple keys per user and per-key revoke from the same screen
+- Low
+- Medium
+- High
+
+---
+
+## How the RAG System Works
+
+The application uses Retrieval-Augmented Generation to ground AI responses in an approved knowledge base.
+
+### 1. Knowledge Base Storage
+
+Knowledge base entries are stored in Supabase in the `enquiry_knowledge_base` table.
+
+Each entry contains:
+
+```txt
+id
+title
+category
+content
+embedding
+created_at
+```
+
+The `embedding` column stores the vector representation of the searchable text.
+
+---
+
+### 2. Knowledge Base Format
+
+The knowledge base source file is stored at:
+
+```txt
+src/data/enquiry-knowledge-base.txt
+```
+
+Entries follow this format:
+
+```txt
+TITLE: Company Contact Details
+CATEGORY: General Question
+CONTENT:
+Strata Consultants Australia Pty Ltd is located at Ground Floor, 25 Milton Parade, Malvern VIC 3144.
+Phone: (03) 9007 2618.
+Email: office@strataconsultants.com.au.
+
+---
+
+TITLE: Service Eligibility
+CATEGORY: New Client
+CONTENT:
+Strata Management Consultants mainly provides services for buildings with 10 lots or more.
+For buildings with fewer than 10 lots, clients should be directed to smaller building options if available.
+```
+
+Each section separated by `---` becomes one knowledge base row.
+
+---
+
+### 3. Embedding the Knowledge Base
+
+During the embedding script, each knowledge base entry is converted into searchable text:
+
+```txt
+Title: <title>
+Category: <category>
+Content:
+<content>
+```
+
+That combined text is embedded using:
+
+```txt
+openai/text-embedding-3-small
+```
+
+through OpenRouter.
+
+The generated vector is stored in the `embedding` column.
+
+This means the system does not automatically embed the entire database row. Instead, it embeds the title, category, and content because those are the meaningful searchable fields.
+
+---
+
+### 4. Embedding the User Query
+
+When a staff member submits an enquiry, the enquiry text is embedded using the same embedding model:
+
+```txt
+openai/text-embedding-3-small
+```
+
+Example user query:
+
+```txt
+Where is your office located?
+```
+
+The app embeds that query, then compares the query embedding against all stored knowledge base embeddings.
+
+---
+
+### 5. Cosine Distance Search
+
+Supabase pgvector compares the query embedding against the stored `embedding` column using cosine distance:
+
+```sql
+kb.embedding <=> query_embedding
+```
+
+Lower cosine distance means a better semantic match.
+
+The RAG search returns the top matching knowledge base entries and injects them into the AI prompt as retrieved context.
+
+---
+
+## Confidence Scoring
+
+Confidence is not generated by the AI model.
+
+Instead, confidence is computed by the system using the cosine distance of the top retrieved knowledge base match.
+
+Formula:
+
+```ts
+confidence = 1 - cosine_distance;
+```
+
+Example:
+
+```txt
+cosine_distance = 0.20
+confidence = 0.80 or 80%
+```
+
+Another example:
+
+```txt
+cosine_distance = 0.76
+confidence = 0.24 or 24%
+```
+
+Meaning:
+
+```txt
+lower distance = better match = higher confidence
+higher distance = weaker match = lower confidence
+```
+
+The confidence score is used to determine whether the enquiry should be manually reviewed.
+
+---
 
 ## Prompt Design
 
-The system prompt enforces:
+The system prompt is designed to produce stable, safe, and UI-ready output.
 
-- fixed classification enum
-- fixed urgency enum
-- confidence from `0..1`
+The AI is instructed to return only strict JSON with these keys:
+
+```json
+{
+  "classification": "General Question",
+  "urgency": "Low",
+  "summary": "...",
+  "recommended_action": "...",
+  "suggested_response": "..."
+}
+```
+
+The prompt enforces:
+
+- fixed classification values
+- fixed urgency values
 - JSON-only output
-- fallback behavior for vague/nonsensical inputs (`Other`, low confidence, clarification action)
+- no AI-generated confidence
+- no hallucinated policies, prices, timelines, addresses, or procedures
+- no claims of access to internal systems, databases, CRMs, or staff portals
+- use of retrieved knowledge base context as the primary source of truth
+- clarification behavior when context is missing or uncertain
+- client-ready suggested responses of at most 5 sentences
 
-This keeps output stable for UI rendering and future automation.
+The application injects the confidence score separately after RAG retrieval.
+
+---
+
+## Behavior When Information Is Missing
+
+If no relevant knowledge base context is available, the assistant must not invent an answer.
+
+Instead, the suggested response should clearly say that no information is currently available or that more details are needed.
+
+Example:
+
+```txt
+Thank you for your enquiry. We currently do not have enough information available to answer this accurately. Could you please provide more details so our team can review and assist you properly?
+```
+
+If partial context is available, the assistant uses only the available information and asks a clarifying follow-up question.
+
+---
 
 ## Error Handling
 
-- Empty/short input: request validation returns clear error
-- Malformed AI JSON: safe fallback analysis (`Other`, low confidence)
-- OpenRouter request failure: fallback analysis is still persisted for manual review
-- Auth/RLS violations: unauthorized users are blocked
+The application includes these safeguards:
+
+- Empty or too-short input is rejected by request validation
+- Malformed AI JSON is caught and replaced with a safe fallback response
+- OpenRouter request failures trigger fallback output for manual review
+- Low-confidence retrieval triggers manual review
+- Vague or nonsensical input is classified as `Other`
+- Unauthorized API requests are rejected
+- Supabase Auth and RLS protect user-specific enquiry history
+- Public API requests require API key authorization
+
+---
+
+## API Surface
+
+### `POST /api/enquiries/analyze`
+
+Authenticated staff analysis endpoint.
+
+Request:
+
+```json
+{
+  "clientName": "John Smith",
+  "clientEmail": "john@example.com",
+  "enquiryText": "Where is your office located?",
+  "modelOverride": "openai/gpt-4.1-mini"
+}
+```
+
+Response:
+
+```json
+{
+  "classification": "General Question",
+  "confidence": 0.82,
+  "urgency": "Low",
+  "summary": "The client is asking for the company office location.",
+  "recommended_action": "Provide the office address and general contact details.",
+  "suggested_response": "Our office is located at Ground Floor, 25 Milton Parade, Malvern VIC 3144. You can also contact us on (03) 9007 2618 or email office@strataconsultants.com.au.",
+  "manual_review": false,
+  "model_used": "openai/gpt-4.1-mini"
+}
+```
+
+---
+
+### `GET /api/enquiries`
+
+Returns authenticated user enquiry history.
+
+---
+
+### `GET /api/enquiries/:id`
+
+Returns one saved enquiry detail for preloading the landing page.
+
+---
+
+### `GET /api/settings/model`
+
+Returns user model settings.
+
+---
+
+### `PATCH /api/settings/model`
+
+Updates user model settings.
+
+Request:
+
+```json
+{
+  "defaultModel": "openai/gpt-4.1-mini",
+  "temperature": 0.2,
+  "maxTokens": 650
+}
+```
+
+---
+
+### `POST /api/public/analyze`
+
+Public API key-protected endpoint for external systems.
+
+Useful for:
+
+- web forms
+- CRM workflows
+- email ingestion
+- task queues
+- automation tools
+
+Full documentation is available in:
+
+```txt
+PUBLIC_API.md
+```
+
+---
 
 ## Project Structure
 
@@ -85,73 +395,311 @@ src/
   app/
     api/
       enquiries/
+      public/analyze/
       settings/model/
     auth/login/
     auth/signup/
     dashboard/
     settings/
     page.tsx
+
   components/
+    enquiry-workspace.tsx
+    tag-badge.tsx
+
+  data/
+    enquiry-knowledge-base.txt
+
   lib/
+    ai/
+      embedding-request-helper.ts
+      openrouter.ts
+      prompt.ts
+    rag/
+      load-knowledge-base.ts
+    scripts/
+      embedding-script.ts
+      insert-rag-test-row.ts
+    services/
+      enquiry-service.ts
+      retrieval-service.ts
+    supabase/
+    validation.ts
+    constants.ts
+    database.types.ts
+
 supabase/
-  migrations/20260516_init.sql
+  migrations/
+
+PUBLIC_API.md
+README.md
 ```
+
+---
 
 ## Local Setup
 
-1. Install dependencies:
+### 1. Install dependencies
 
 ```bash
 npm install
 ```
 
-2. Copy env file:
+---
+
+### 2. Create environment file
 
 ```bash
 cp .env.example .env.local
 ```
 
-3. Fill all required `.env.local` values:
+On Windows, create `.env.local` manually if `cp` is not available.
 
-- `OPENROUTER_API_KEY`
-- `OPENROUTER_DEFAULT_MODEL`
-- `PUBLIC_API_KEY`
-- `NEXT_PUBLIC_SUPABASE_URL`
-- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-- `SUPABASE_SERVICE_ROLE_KEY`
+---
+
+### 3. Configure `.env.local`
+
+Required:
+
+```env
+OPENROUTER_API_KEY=
+OPENROUTER_DEFAULT_MODEL=openai/gpt-4.1-mini
+
+NEXT_PUBLIC_SUPABASE_URL=
+NEXT_PUBLIC_SUPABASE_ANON_KEY=
+SUPABASE_SERVICE_ROLE_KEY=
+```
 
 Optional:
 
-- `OPENROUTER_SITE_URL`
-- `OPENROUTER_APP_NAME`
-- `PUBLIC_API_KEY` (optional global fallback key; per-user keys can be generated in Settings)
+```env
+OPENROUTER_SITE_URL=
+OPENROUTER_APP_NAME=
+PUBLIC_API_KEY=
+```
 
-4. Run the SQL migration in Supabase SQL editor:
+---
 
-- `supabase/migrations/20260516_init.sql`
+## Supabase Setup
 
-5. Start dev server:
+### 1. Enable pgvector
+
+Run in Supabase SQL Editor:
+
+```sql
+create extension if not exists vector;
+```
+
+---
+
+### 2. Create the knowledge base table
+
+```sql
+create table if not exists public.enquiry_knowledge_base (
+  id uuid primary key default gen_random_uuid(),
+  title text not null,
+  content text not null,
+  category text,
+  embedding vector(1536),
+  created_at timestamptz default now()
+);
+```
+
+---
+
+### 3. Create the cosine-distance search function
+
+```sql
+drop function if exists public.match_enquiry_kb(vector, integer);
+
+create function public.match_enquiry_kb (
+  query_embedding vector(1536),
+  match_count int default 5
+)
+returns table (
+  id uuid,
+  title text,
+  content text,
+  category text,
+  cosine_distance float
+)
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select
+    kb.id,
+    kb.title,
+    kb.content,
+    kb.category,
+    kb.embedding <=> query_embedding as cosine_distance
+  from public.enquiry_knowledge_base kb
+  where kb.embedding is not null
+  order by kb.embedding <=> query_embedding
+  limit match_count;
+$$;
+```
+
+---
+
+## Seeding the Knowledge Base
+
+After editing:
+
+```txt
+src/data/enquiry-knowledge-base.txt
+```
+
+run the embedding script:
+
+```bash
+npx tsx src/lib/scripts/embedding-script.ts
+```
+
+The script:
+
+1. Reads `src/data/enquiry-knowledge-base.txt`
+2. Splits entries by `---`
+3. Extracts `TITLE`, `CATEGORY`, and `CONTENT`
+4. Builds searchable text from title + category + content
+5. Generates embeddings through OpenRouter
+6. Inserts each row into Supabase
+
+---
+
+## Resetting the Knowledge Base
+
+To clear old knowledge base rows before re-seeding:
+
+```sql
+truncate table public.enquiry_knowledge_base restart identity;
+```
+
+Then run:
+
+```bash
+npx tsx src/lib/scripts/embedding-script.ts
+```
+
+---
+
+## Verifying Knowledge Base Entries
+
+Run this SQL in Supabase:
+
+```sql
+select
+  id,
+  title,
+  category,
+  embedding is not null as has_embedding,
+  created_at
+from public.enquiry_knowledge_base
+order by created_at desc;
+```
+
+Expected result:
+
+```txt
+has_embedding = true
+```
+
+---
+
+## Testing Cosine Search
+
+You can test the search function directly in Supabase:
+
+```sql
+select *
+from public.match_enquiry_kb(
+  (
+    select embedding
+    from public.enquiry_knowledge_base
+    where embedding is not null
+    limit 1
+  ),
+  5
+);
+```
+
+The top result should have a cosine distance close to `0`.
+
+---
+
+## Testing an Exact Match
+
+A test script can insert a row where the question text itself is embedded.
+
+Run:
+
+```bash
+npx tsx src/lib/scripts/insert-rag-test-row.ts
+```
+
+Expected result:
+
+```txt
+Top cosine distance: close to 0
+Top confidence: close to 1
+Top confidence percent: close to 100%
+```
+
+Small floating-point differences are normal.
+
+---
+
+## Running the App
+
+Start the development server:
 
 ```bash
 npm run dev
 ```
 
-6. Open:
+Open:
 
-- [http://localhost:3000](http://localhost:3000)
+```txt
+http://localhost:3000
+```
 
-## How to Run (Quick)
+Then:
 
-1. `npm install`
-2. Configure `.env.local` using `.env.example`
-3. Apply `supabase/migrations/20260516_init.sql` in Supabase SQL editor
-4. `npm run dev`
-5. Open `http://localhost:3000`
-6. Create a staff account, verify email, then sign in
+1. Create a staff account
+2. Verify email if required
+3. Sign in
+4. Submit a client enquiry
+5. Review classification, confidence, urgency, recommended action, and suggested response
+
+---
+
+## How to Run Quickly
+
+```bash
+npm install
+npm run dev
+```
+
+Then open:
+
+```txt
+http://localhost:3000
+```
+
+For RAG to work, make sure:
+
+1. Supabase tables and RPC are created
+2. `.env.local` is configured
+3. `src/data/enquiry-knowledge-base.txt` exists
+4. the embedding script has been run
+5. `enquiry_knowledge_base` rows have non-null embeddings
+
+---
 
 ## Testing
 
-Run all tests:
+Run tests:
 
 ```bash
 npm test
@@ -163,34 +711,125 @@ Run lint:
 npm run lint
 ```
 
-## Deploy on Vercel
+---
 
-1. Push repo to GitHub
-2. Import project in Vercel
-3. Add all environment variables from `.env.example` in Vercel project settings
+## Deployment
+
+This project is ready for Vercel deployment.
+
+Steps:
+
+1. Push the project to GitHub
+2. Import the repository into Vercel
+3. Add all required environment variables
 4. Deploy
-5. Ensure Supabase Auth redirect URLs include your Vercel domain
+5. Add the deployed domain to Supabase Auth redirect URLs
+6. Ensure the Supabase database has been migrated and seeded
+
+---
 
 ## Practical Workflow Fit
 
 This is intentionally a staff-assist tool, not a fully autonomous responder.
-Staff can review, edit, and route suggested outputs before client communication.
 
-## Design Decisions
+Staff can:
 
-- **Staff-assist, not full automation**: the tool recommends actions and responses, but humans remain in the loop for client-safe communication.
-- **Structured AI output**: strict JSON prompt + schema validation prevents fragile free-text parsing in the UI.
-- **Confidence-aware fallback**: low-confidence or invalid AI responses are preserved with manual-review flags instead of failing hard.
-- **Per-user model control**: OpenRouter model defaults are saved in user settings, with per-enquiry override for experimentation.
-- **Secure multi-user data model**: Supabase Auth + RLS ensures each staff user can only access their own enquiry history/settings.
-- **Two-surface workflow**: main assistant page for analysis and a separate card dashboard for history + quick reopen of full results.
-- **Public API for automation**: a key-protected public endpoint (`POST /api/public/analyze`) enables safe integration with web forms, CRMs, email pipelines, and task queues without requiring dashboard login.
+- review the classification
+- check confidence
+- edit the suggested response
+- decide whether manual follow-up is needed
+- route the enquiry to the correct internal workflow
+
+This makes the system safer for real client communication while still reducing repetitive manual work.
+
+---
 
 ## Automation Potential
 
-Natural next integrations:
+The public API makes the tool ready for larger workflow automation.
 
-- inbound email/webform ingestion
-- CRM task creation
-- Slack/Teams notifications
-- queue-based routing for onboarding/support teams
+Possible integrations:
+
+- website contact forms
+- shared inbox processing
+- CRM lead creation
+- HubSpot workflows
+- Odoo CRM workflows
+- Slack or Teams alerts
+- task queue routing
+- human review pipelines
+- admin dashboards
+
+Example workflow:
+
+```txt
+Website form submission
+→ Public API analyse endpoint
+→ Classify enquiry
+→ Retrieve relevant KB context
+→ Compute confidence
+→ Store result
+→ Create CRM task
+→ Notify staff if urgent or low confidence
+```
+
+---
+
+## Design Decisions
+
+### RAG before generation
+
+The system retrieves relevant knowledge base context before asking the AI model to generate a response. This reduces hallucination and keeps responses grounded in approved information.
+
+### Confidence is system-computed
+
+The AI model does not estimate confidence. Confidence is calculated from cosine distance, making it deterministic and easier to audit.
+
+### Human in the loop
+
+Low-confidence outputs are flagged for manual review. This keeps client communication safer and more practical.
+
+### Strict JSON output
+
+The model is required to return strict JSON. Zod validates the output before it is used by the UI.
+
+### Safe fallback behavior
+
+If the AI output fails validation or context is insufficient, the system returns a safe fallback asking for clarification.
+
+### OpenRouter model flexibility
+
+OpenRouter allows switching between models without changing the application architecture.
+
+### Knowledge base chunking
+
+The knowledge base is split into focused chunks. Each chunk has a clear title, category, and content block. This improves retrieval quality compared with embedding one large webpage dump.
+
+---
+
+## Known Limitations
+
+- Confidence measures retrieval similarity, not absolute truth.
+- If the knowledge base is incomplete, the assistant may need to ask for clarification.
+- RAG quality depends heavily on clean chunking and good knowledge base entries.
+- The prototype does not send emails automatically.
+- Staff must still review suggested responses before using them.
+- Public API integrations require careful security and workflow design before production use.
+
+---
+
+## Submission Notes
+
+This project demonstrates an AI-powered business workflow assistant for processing client enquiries.
+
+It includes:
+
+- working web UI
+- AI classification
+- RAG-based context retrieval
+- cosine-distance confidence scoring
+- suggested staff actions
+- client-ready response drafts
+- history dashboard
+- public API for automation
+- README documentation
