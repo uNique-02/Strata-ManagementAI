@@ -48,7 +48,9 @@ export interface Database {
           created_at?: string;
           updated_at?: string;
         };
-        Update: Partial<Database["public"]["Tables"]["enquiries"]["Insert"]>;
+        Update: Partial<
+          Database["public"]["Tables"]["enquiries"]["Insert"]
+        >;
         Relationships: [
           {
             foreignKeyName: "enquiries_user_id_fkey";
@@ -58,6 +60,7 @@ export interface Database {
           },
         ];
       };
+
       user_settings: {
         Row: {
           user_id: string;
@@ -73,7 +76,9 @@ export interface Database {
           max_tokens?: number;
           updated_at?: string;
         };
-        Update: Partial<Database["public"]["Tables"]["user_settings"]["Insert"]>;
+        Update: Partial<
+          Database["public"]["Tables"]["user_settings"]["Insert"]
+        >;
         Relationships: [
           {
             foreignKeyName: "user_settings_user_id_fkey";
@@ -83,6 +88,7 @@ export interface Database {
           },
         ];
       };
+
       public_api_keys: {
         Row: {
           id: string;
@@ -102,7 +108,9 @@ export interface Database {
           created_at?: string;
           updated_at?: string;
         };
-        Update: Partial<Database["public"]["Tables"]["public_api_keys"]["Insert"]>;
+        Update: Partial<
+          Database["public"]["Tables"]["public_api_keys"]["Insert"]
+        >;
         Relationships: [
           {
             foreignKeyName: "public_api_keys_user_id_fkey";
@@ -112,10 +120,51 @@ export interface Database {
           },
         ];
       };
+
+      enquiry_knowledge_base: {
+        Row: {
+          id: string;
+          title: string;
+          content: string;
+          category: string | null;
+          embedding: number[] | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          title: string;
+          content: string;
+          category?: string | null;
+          embedding?: number[] | null;
+          created_at?: string;
+        };
+        Update: Partial<
+          Database["public"]["Tables"]["enquiry_knowledge_base"]["Insert"]
+        >;
+        Relationships: [];
+      };
     };
+
     Views: Record<string, never>;
-    Functions: Record<string, never>;
+
+    Functions: {
+      match_enquiry_kb: {
+        Args: {
+          query_embedding: number[];
+          match_count?: number;
+        };
+        Returns: {
+          id: string;
+          title: string;
+          content: string;
+          category: string | null;
+          cosine_distance: number;
+        }[];
+      };
+    };
+
     Enums: Record<string, never>;
+
     CompositeTypes: Record<string, never>;
   };
 }

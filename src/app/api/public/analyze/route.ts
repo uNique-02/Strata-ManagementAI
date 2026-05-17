@@ -13,15 +13,20 @@ const publicAnalyzeRequestSchema = analyzeRequestSchema.extend({
 
 function extractApiKey(request: Request) {
   const headerKey = request.headers.get("x-api-key");
+
   if (headerKey && headerKey.trim().length > 0) {
     return headerKey.trim();
   }
 
   const authHeader = request.headers.get("authorization");
+
   if (!authHeader) return null;
 
   const [scheme, token] = authHeader.split(" ");
-  if (scheme?.toLowerCase() !== "bearer" || !token) return null;
+
+  if (scheme?.toLowerCase() !== "bearer" || !token) {
+    return null;
+  }
 
   return token.trim();
 }
@@ -29,7 +34,10 @@ function extractApiKey(request: Request) {
 export async function POST(request: Request) {
   try {
     const env = getServerEnv();
+    const admin = getSupabaseAdminClient();
+
     const incomingKey = extractApiKey(request);
+
     if (!incomingKey) {
       return apiError("Unauthorized.", 401);
     }
@@ -39,7 +47,6 @@ export async function POST(request: Request) {
     if (env.publicApiKey && incomingKey === env.publicApiKey) {
       authorized = true;
     } else {
-      const admin = getSupabaseAdminClient();
       const { data, error } = await admin
         .from("public_api_keys")
         .select("id")
@@ -58,8 +65,12 @@ export async function POST(request: Request) {
       return apiError("Unauthorized.", 401);
     }
 
-    const body = publicAnalyzeRequestSchema.parse(await request.json());
+    const body = publicAnalyzeRequestSchema.parse(
+      await request.json(),
+    );
+
     const analysis = await analyzeEnquiry({
+      supabase: admin,
       enquiry: {
         clientName: body.clientName,
         clientEmail: body.clientEmail,

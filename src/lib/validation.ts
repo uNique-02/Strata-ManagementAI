@@ -30,7 +30,6 @@ export const analyzeRequestSchema = z.object({
 
 export const aiResponseSchema = z.object({
   classification: classificationEnum,
-  confidence: z.number().min(0).max(1),
   urgency: urgencyEnum,
   summary: z.string().trim().min(10).max(800),
   recommended_action: z.string().trim().min(10).max(1200),
@@ -40,7 +39,11 @@ export const aiResponseSchema = z.object({
 export type ValidAnalyzeRequest = z.infer<typeof analyzeRequestSchema>;
 export type ParsedAiResponse = z.infer<typeof aiResponseSchema>;
 
-export function normalizeOptionalString(value?: string) {
+export type ParsedAnalysisResponse = ParsedAiResponse & {
+  confidence: number;
+};
+
+export function normalizeOptionalString(value?: string | null) {
   if (!value) return null;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
@@ -56,10 +59,13 @@ export function parseAiJson(rawContent: string) {
   return JSON.parse(stripped) as unknown;
 }
 
-export function fallbackAiResponse(enquiryText: string): ParsedAiResponse {
+export function fallbackAiResponse(
+  enquiryText: string,
+  confidence = FALLBACK_CONFIDENCE,
+): ParsedAnalysisResponse {
   return {
     classification: "Other",
-    confidence: FALLBACK_CONFIDENCE,
+    confidence: clampNumber(confidence, 0, 1),
     urgency: "Low",
     summary:
       enquiryText.length < 30
@@ -74,17 +80,17 @@ export function fallbackAiResponse(enquiryText: string): ParsedAiResponse {
 
 export function sanitizeAiResponse(
   data: ParsedAiResponse,
-): ParsedAiResponse & {
+  confidence: number,
+): ParsedAnalysisResponse & {
   classification: Classification;
   urgency: Urgency;
   confidence: number;
 } {
   return {
     ...data,
-    confidence: clampNumber(data.confidence, 0, 1),
+    confidence: clampNumber(confidence, 0, 1),
     summary: data.summary.trim(),
     recommended_action: data.recommended_action.trim(),
     suggested_response: data.suggested_response.trim(),
   };
 }
-

@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { ENQUIRY_SYSTEM_PROMPT, buildUserPrompt } from "@/lib/ai/prompt";
 import { requestOpenRouterCompletion } from "@/lib/ai/openrouter";
 import {
+  FALLBACK_CONFIDENCE,
   MANUAL_REVIEW_THRESHOLD,
   PROMPT_VERSION,
   type Classification,
@@ -16,6 +17,7 @@ import {
   parseAiJson,
   sanitizeAiResponse,
 } from "@/lib/validation";
+import { retrieveRagContext } from "./retrieval-service";
 
 type DBClient = SupabaseClient<Database>;
 
@@ -46,40 +48,80 @@ export interface EnquiryAnalysisResult {
 }
 
 export async function analyzeEnquiry(input: {
+  supabase: DBClient;
   enquiry: AnalyzeEnquiryInput;
   settings: UserModelSettings;
 }): Promise<EnquiryAnalysisResult> {
   const validatedInput = analyzeRequestSchema.parse(input.enquiry);
+
   const clientName = normalizeOptionalString(validatedInput.clientName);
   const clientEmail = normalizeOptionalString(validatedInput.clientEmail);
+
   const modelToUse =
-    normalizeOptionalString(validatedInput.modelOverride) ?? input.settings.defaultModel;
+    normalizeOptionalString(validatedInput.modelOverride) ??
+    input.settings.defaultModel;
+
+  const rag = await retrieveRagContext({
+    supabase: input.supabase,
+    enquiryText: validatedInput.enquiryText,
+  });
+
+  console.log("\n========== RAG DEBUG ==========");
+  console.log("Enquiry:", validatedInput.enquiryText);
+
+  console.log("\nConfidence:");
+  console.log(rag.confidence);
+
+  console.log("\nMatches:");
+  console.dir(rag.matches, { depth: null });
+
+  console.log("\nContext Text:");
+  console.log(rag.contextText);
+
+  console.log("========== END RAG DEBUG ==========\n");
+
+
+  const confidence =
+    rag.confidence > 0 ? rag.confidence : FALLBACK_CONFIDENCE;
 
   let aiPayload: unknown = null;
-  let parsedAnalysis = fallbackAiResponse(validatedInput.enquiryText);
+
+  let parsedAnalysis = fallbackAiResponse(
+    validatedInput.enquiryText,
+    confidence,
+  );
 
   try {
+    const userPrompt = await buildUserPrompt({
+      clientName,
+      clientEmail,
+      enquiryText: validatedInput.enquiryText,
+      ragContext: rag.contextText,
+    });
+
     const completion = await requestOpenRouterCompletion({
       model: modelToUse,
       systemPrompt: ENQUIRY_SYSTEM_PROMPT,
-      userPrompt: buildUserPrompt({
-        clientName,
-        clientEmail,
-        enquiryText: validatedInput.enquiryText,
-      }),
+      userPrompt,
       temperature: input.settings.temperature,
       maxTokens: input.settings.maxTokens,
     });
 
     aiPayload = completion.raw;
+
     const parsedJson = parseAiJson(completion.content);
     const validatedAi = aiResponseSchema.parse(parsedJson);
-    parsedAnalysis = sanitizeAiResponse(validatedAi);
+
+    parsedAnalysis = sanitizeAiResponse(validatedAi, confidence);
   } catch {
-    parsedAnalysis = fallbackAiResponse(validatedInput.enquiryText);
+    parsedAnalysis = fallbackAiResponse(
+      validatedInput.enquiryText,
+      confidence,
+    );
   }
 
-  const manualReview = parsedAnalysis.confidence < MANUAL_REVIEW_THRESHOLD;
+  const manualReview =
+    parsedAnalysis.confidence < MANUAL_REVIEW_THRESHOLD;
 
   return {
     classification: parsedAnalysis.classification,
@@ -94,7 +136,6 @@ export async function analyzeEnquiry(input: {
     raw_ai_json: aiPayload as Json,
   };
 }
-
 export async function analyzeAndSaveEnquiry(args: {
   supabase: DBClient;
   userId: string;
@@ -102,9 +143,17 @@ export async function analyzeAndSaveEnquiry(args: {
   settings: UserModelSettings;
 }) {
   const validatedInput = analyzeRequestSchema.parse(args.input);
-  const clientName = normalizeOptionalString(validatedInput.clientName);
-  const clientEmail = normalizeOptionalString(validatedInput.clientEmail);
+
+  const clientName = normalizeOptionalString(
+    validatedInput.clientName,
+  );
+
+  const clientEmail = normalizeOptionalString(
+    validatedInput.clientEmail,
+  );
+
   const analysis = await analyzeEnquiry({
+    supabase: args.supabase,
     enquiry: validatedInput,
     settings: args.settings,
   });
@@ -133,7 +182,9 @@ export async function analyzeAndSaveEnquiry(args: {
     .single();
 
   if (error || !data) {
-    throw new Error(error?.message ?? "Unable to persist enquiry analysis.");
+    throw new Error(
+      error?.message ?? "Unable to persist enquiry analysis.",
+    );
   }
 
   return {
@@ -166,19 +217,23 @@ export async function getOrCreateUserModelSettings(args: {
     };
   }
 
-  const { data: inserted, error: insertError } = await args.supabase
-    .from("user_settings")
-    .insert({
-      user_id: args.userId,
-      default_model: args.envDefaultModel,
-      temperature: 0.2,
-      max_tokens: 650,
-    })
-    .select("*")
-    .single();
+  const { data: inserted, error: insertError } =
+    await args.supabase
+      .from("user_settings")
+      .insert({
+        user_id: args.userId,
+        default_model: args.envDefaultModel,
+        temperature: 0.2,
+        max_tokens: 650,
+      })
+      .select("*")
+      .single();
 
   if (insertError || !inserted) {
-    throw new Error(insertError?.message ?? "Unable to create default user settings.");
+    throw new Error(
+      insertError?.message ??
+        "Unable to create default user settings.",
+    );
   }
 
   return {
