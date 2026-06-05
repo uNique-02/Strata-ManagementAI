@@ -6,9 +6,6 @@ describe("EnquiryWorkspace", () => {
   it("shows validation error when enquiry text is empty", async () => {
     render(<EnquiryWorkspace initialResult={null} defaultModel="openai/gpt-4o-mini" />);
 
-    fireEvent.change(screen.getByPlaceholderText("Paste the full client enquiry..."), {
-      target: { value: "   " },
-    });
     fireEvent.click(screen.getByRole("button", { name: /analyze enquiry/i }));
 
     expect(

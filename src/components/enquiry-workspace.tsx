@@ -155,7 +155,6 @@ export function EnquiryWorkspace({
               value={enquiryText}
               onChange={(event) => setEnquiryText(event.target.value)}
               maxLength={4000}
-              required
             />
             <span className="mt-1 block text-right text-xs text-slate-500">
               {enquiryText.length}/4000
