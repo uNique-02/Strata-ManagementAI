@@ -29,12 +29,18 @@ const TEST_QUESTION = "Where is your office located?";
 const TEST_ANSWER =
   "Strata Management Consultants is located at Ground Floor, 25 Milton Parade, Malvern VIC 3144.";
 
+type RagMatch = {
+  title: string;
+  category: string | null;
+  cosine_distance: number;
+};
+
 function clampNumber(value: number, min = 0, max = 1) {
   return Math.max(min, Math.min(max, value));
 }
 
 function confidenceFromCosineDistance(distance: number) {
-  return clampNumber(1 - distance);
+  return clampNumber(1 - distance / 2);
 }
 
 async function requestOpenRouterEmbedding(input: string): Promise<number[]> {
@@ -129,8 +135,10 @@ async function main() {
   }
 
   console.log("\nTop matches:");
+  const typedMatches = (matches ?? []) as RagMatch[];
+
   console.table(
-    (matches ?? []).map((match: any, index: number) => {
+    typedMatches.map((match, index) => {
       const confidence = confidenceFromCosineDistance(
         match.cosine_distance,
       );
@@ -146,7 +154,7 @@ async function main() {
     }),
   );
 
-  const topMatch = matches?.[0];
+  const topMatch = typedMatches[0];
 
   if (!topMatch) {
     console.log("\nNo match returned.");

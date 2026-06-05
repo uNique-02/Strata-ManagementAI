@@ -194,7 +194,13 @@ Supabase pgvector compares the query embedding against the stored `embedding` co
 kb.embedding <=> query_embedding
 ```
 
-Lower cosine distance means a better semantic match.
+Lower cosine distance means a better semantic match. With pgvector cosine distance, the theoretical range is `0` to `2`:
+
+```txt
+0 = identical direction
+1 = unrelated / orthogonal
+2 = opposite direction
+```
 
 The RAG search returns the top matching knowledge base entries and injects them into the AI prompt as retrieved context.
 
@@ -209,21 +215,23 @@ Instead, confidence is computed by the system using the cosine distance of the t
 Formula:
 
 ```ts
-confidence = 1 - cosine_distance;
+confidence = 1 - (cosine_distance / 2);
 ```
+
+The result is clamped between `0` and `1`.
 
 Example:
 
 ```txt
 cosine_distance = 0.20
-confidence = 0.80 or 80%
+confidence = 0.90 or 90%
 ```
 
 Another example:
 
 ```txt
 cosine_distance = 0.76
-confidence = 0.24 or 24%
+confidence = 0.62 or 62%
 ```
 
 Meaning:

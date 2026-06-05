@@ -26,7 +26,7 @@ function clampNumber(value: number, min = 0, max = 1) {
  * Convert distance -> confidence
  */
 function confidenceFromCosineDistance(distance: number) {
-  return clampNumber(1 - distance);
+  return clampNumber(1 - distance / 2);
 }
 
 export async function retrieveRagContext(args: {
